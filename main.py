@@ -1,5 +1,6 @@
 import mido
 
+
 # Evolver Sysex id
 
 SYSEX_ID = (0x01, 0x20, 0x01)
@@ -46,8 +47,6 @@ def unpack(packed: tuple) -> tuple:
     
     output = []
 
-
-    
     return unpacked
 
 
