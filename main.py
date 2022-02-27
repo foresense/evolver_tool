@@ -25,30 +25,30 @@ SHIFT_ON = 0x13
 SHIFT_OFF = 0x14
 
 
-def pack(input: list) -> list:
+def pack(parameters: list) -> list:
+    """pack 7x 8-bit bytes into 8x 7-bit bytes"""
 
-    # pack input should be 7, or maybe we can figure something out something else
+    byte = 0
+    out = []
 
-    eight = 0
-    output = []
+    for n, val in enumerate(parameters):
+        high, low = divmod(val, 1 << 7)
+        byte = byte | high << n
+        out.append(low)
+        # print(f"{high=} {low=}, {bin(byte)=}, {n=}")
 
-    for index, value in enumerate(input):
-        hi, lo = divmod(value, 128)
-        eight = hi << index | eight
-        output.append(lo)
-        # print(f"{bin(value)} -> {hi:1b} | {lo:08b} -> add: {[eight]} + {output}")
-
-    # print(f"{[eight] + output}")
-
-    return [eight] + output
+    return [byte] + out
 
 
-def unpack(packed: tuple) -> tuple:
-    
-    output = []
+def unpack(packed):
+    """unpack 8 7-bit bytes into 7 8-bit bytes"""
 
-    return unpacked
+    bits, bytes = packed[0], packed[1:]
+
+    bitlist = bits
 
 
-# test
-p = pack([0xC0, 0xA0, 0x90, 0x88, 0x82, 0x84, 0x82])
+
+
+test_input = [0xC0, 0xA0, 0x90, 0x88, 0x82, 0x84, 0x82]
+test_packed = pack(test_input)  # [64, 32, 16, 8, 2, 4, 2, 0]
