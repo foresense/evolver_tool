@@ -67,13 +67,11 @@ def pack_data(data: dict) -> list:
 
 
 def unpack_data(packed: tuple):
-
     if packed[0] not in (PROG_PAR, SEQ_PAR, MAIN_PAR, PROG_DUMP, EDIT_DUMP, WAVE_DUMP, MAIN_DUMP, NAME_DUMP):
         print(f"what? {packed}")
     # alternate LS then MS byte
-    if packed[0] == MAIN_DUMP:
-        print(f"{len(packed[1:])} bytes: {packed[1:]}")
 
+    if packed[0] == MAIN_DUMP:
         # https://stackoverflow.com/questions/2990121/how-do-i-loop-through-a-list-by-twos
         iter_data = iter(packed[1:])
         for n, (ls, ms) in enumerate(zip(iter_data, iter_data)):
