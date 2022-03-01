@@ -31,11 +31,12 @@ SHIFT_ON = 0x13
 SHIFT_OFF = 0x14
 
 
+# TODO dictionary for memory
+
 main_parameters = (
     "program", "bank", "volume", "transpose", "bpm", "clock_div", "program_tempo", "midi_clock",
     "lock_seq", "poly_chain", "input_gain", "fine_tune", "midi_rec", "midi_xmit", "midi_chan", "midi_dump"
 )
-
 
 #program_number = None
 #bank_number = None
@@ -74,7 +75,9 @@ def unpack_data(packed: tuple):
         print(f"{len(packed[1:]} bytes: packed[1:]))
         for n in packed[1:]:
             pass
-            #algorithm that makes LS, MS pairs into one byte
+            # TODO algorithm that makes LS, MS pairs into one byte
+
+    # TODO algorithm that unpacks 7 bit into 8 bits and then into a dictionary
 
 
 def queue_message(data: list) -> mido.Message:
