@@ -67,15 +67,27 @@ def pack_data(data: dict) -> list:
 
 
 def unpack_data(packed: tuple):
-   
+
     if packed[0] not in (PROG_PAR, SEQ_PAR, MAIN_PAR, PROG_DUMP, EDIT_DUMP, WAVE_DUMP, MAIN_DUMP, NAME_DUMP):
         print(f"what? {packed}")
     # alternate LS then MS byte
     if packed[0] == MAIN_DUMP:
-        print(f"{len(packed[1:]} bytes: packed[1:]))
-        for n in packed[1:]:
-            pass
-            # TODO algorithm that makes LS, MS pairs into one byte
+        print(f"{len(packed[1:])} bytes: {packed[1:]}")
+
+        # https://stackoverflow.com/questions/2990121/how-do-i-loop-through-a-list-by-twos
+        iter_data = iter(packed[1:])
+        for n, (ls, ms) in enumerate(zip(iter_data, iter_data)):
+            #print(f"{n}, {ls}, {ms}")
+            name = main_parameters[n]
+            value = ls + (ms << 4)
+            main_memory.update({name: value})
+        # print(main_memory)
+    
+    if packed[0] == MAIN_PAR:
+        name = main_parameters[packed[1]]
+        value = packed[2] + (packed[3] << 4)
+        main_memory.update({name: value})
+        # print(main_memory)
 
     # TODO algorithm that unpacks 7 bit into 8 bits and then into a dictionary
 
@@ -87,12 +99,12 @@ def queue_message(data: list) -> mido.Message:
 def midi_in_callback(message: mido.Message):
     if message.type == 'program_change':
         # print(f"program number: {message.program + 1}")
-        main_memory.update({"program_number": message.program})
+        main_memory.update({"program": message.program})
         queue_message([EDIT_REQ])
     
     elif message.type == 'control_change' and message.control == 32:
         # print(f"bank number: {m.value + 1}")
-        main_memory.update({"bank_number": message.value})
+        main_memory.update({"bank": message.value})
         queue_message([EDIT_REQ])
     
     elif message.type == 'sysex' and message.data[:3] == SYSEX_ID:
@@ -119,4 +131,6 @@ if __name__ == "__main__":
     t = Thread(target=queue_out_thread)
     t.start()
 
+    # update memory
     queue_message([MAIN_REQ])
+    queue_message([EDIT_REQ])
