@@ -1,85 +1,134 @@
+#from collections import deque
+from collections import abc
 from queue import Queue
 from threading import Thread
-from time import sleep
+from time import sleep, perf_counter
 
 import mido
 
 
-OUT_SPEED = 1 / 10         # 10 messages per second out rate
+# 10 messages per second out rate
+OUT_SPEED = 1 / 10         
 
 SYSEX_ID = (0x01, 0x20, 0x01)
 
-PROG_PAR = 0x01     #     1
-PROG_DUMP = 0x02    #    10
-EDIT_DUMP = 0x03    #    11
-RESET = 0x04        #   100
-PROG_REQ = 0x05     #   101
-EDIT_REQ = 0x06     #   110
-SEQ_PAR = 0x08      #  1000
-MAIN_PAR = 0x09     #  1001
-WAVE_DUMP = 0x0A    #  1010
-WAVE_REQ = 0x0B     #  1011
-MAIN_REQ = 0x0E     #  1110
-MAIN_DUMP = 0x0F    #  1111
-NAME_REQ = 0x10     # 10000
-NAME_DUMP = 0x11    # 10001
-START_STOP = 0x12   # 10010
-SHIFT_ON = 0x13     # 10011
-SHIFT_OFF = 0x14    # 10100
+PROG_PAR = 0x01
+SEQ_PAR = 0x08
+MAIN_PAR = 0x09
 
+PROG_DUMP = 0x02
+EDIT_DUMP = 0x03
+WAVE_DUMP = 0x0A
+MAIN_DUMP = 0x0F
+NAME_DUMP = 0x11
 
-# TODO dictionary for memory
+PROG_REQ = 0x05
+EDIT_REQ = 0x06
+WAVE_REQ = 0x0B
+MAIN_REQ = 0x0E
+NAME_REQ = 0x10
+
+RESET = 0x04
+START_STOP = 0x12
+SHIFT_ON = 0x13
+SHIFT_OFF = 0x14
+
 
 main_parameters = (
     "program", "bank", "volume", "transpose", "bpm", "clock_div", "program_tempo", "midi_clock",
     "lock_seq", "poly_chain", "input_gain", "fine_tune", "midi_rec", "midi_xmit", "midi_chan", "midi_dump"
 )
 
-#program_number = None
-#bank_number = None
+program_parameters = (
+    "osc1_freq", "osc1_fine", "osc1_shape", "osc1_level", "osc2_freq", "osc2_fine", "osc2_shape", "osc2_level",
+    "osc3_freq", "osc3_fine", "osc3_shape", "osc3_level", "osc4_freq", "osc4_fine", "osc4_shape", "osc4_level",
+    "flt_freq", "flt_env", "flt_attack", "flt_decay", "flt_sustain", "flt_release", "flt_resonance", "flt_key",
+    "vca_level", "vca_env", "vca_attack", "vca_decay", "vca_sustain", "vca_release", "output_pan", "volume",
+    "fb_freq", "fb_level", "fb_grunge", "delay_t1", "delay_l1", "delay_fb1", "delay_fb2", "output_hack",
+    "lfo1_freq", "lfo1_shape", "lfo1_amount", "lfo1_dest", "lfo2_freq", "lfo2_shape", "lfo2_amount", "lfo2_dest",
+    "env3_amount", "env3_dest", "env3_attack", "env3_decay", "env3_sustain", "env3_release", "trigger_sel", "key_offset",
+    "seq1_dest", "seq2_dest", "seq3_dest", "seq4_dest", "noise_vol", "ext_in_vol", "ext_in_mode", "input_hack",
+    "osc1_glide", "sync_2-1", "bpm", "clock_div", "osc2_glide", "osc_slop", "pb_range", "key_mode",
+    "osc3_glide", "fm_4-3", "osc3_shape_seq", "rm_4-3", "osc4_glide", "fm_3-4", "osc4_shape_seq", "rm_3-4",
+    "flt_poles", "flt_vel", "flt_audio_mod", "flt_split", "highpass", "mod1_source", "mod1_amount", "mod1_dest",
+    "exp-lin_env", "vca_vel", "mod2_source", "mod2_amount", "mod2_dest", "mod3_source", "mod3_amount", "mod3_dest",
+    "mod4_source", "mod4_amount", "mod4_dest", "delay_t2", "delay_l2", "delay_t3", "delay_l3", "distortion",
+    "lfo3_freq", "lfo3_shape", "lfo3_amount", "lfo3_dest", "lfo4_freq", "lfo4_shape", "lfo4_amount", "lfo4_dest",
+    "env3_delay", "env3_vel", "in_peak_amount", "in_peak_dest", "in_env_amount", "in_env_dest", "vel_amount", "vel_dest",
+    "modwheel_amount", "modwheel_dest", "pressure_amount", "pressure_dest", "breath_amount", "breath_dest", "foot_amount", "foot_dest"
+)
 
-queue_out = Queue(maxsize=128)
+queue_out = Queue(maxsize=16)
 
 main_memory = {}
 edit_memory = {}
+seq_memory = {}
+
+# initialize programs memory
+
+banks = {}
+programs = {}
+for x in range(4):
+    for y in range(128):
+        programs.update({y: dict()})
+    banks.update({x: programs})
 
 
-def pack1111(parameters: list) -> list:
-    byte = 0
-    out = []
-    for n, val in enumerate(parameters):
-        high, low = divmod(val, 1 << 7)
-        byte = byte | high << n
-        out.append(low)
-        # print(f"{high=} {low=}, {bin(byte)=}, {n=}")
-    return [byte] + out
+def unpack_ls_ms(ls: int, ms: int) -> int:
+    return ls + (ms << 4)
 
 
-def pack_data(data: dict) -> list:
-    packed = [0]
-    for val in reversed(data):
-        packed[0] = packed[0] << 1 | val >> 7
-        packed.append(val & 0x7f)
-    return packed
+def unpack_ms_bit(packed_data: tuple) -> list:
+    data = []
+    for n, byte in enumerate(packed_data):
+        if n % 8:
+            if ms_bits & (1 << (n - 1)):
+                data.append(byte | 0x80)
+            else:
+                data.append(byte)
+        else:
+            ms_bits = byte
+    return tuple(data)
 
 
-def unpack_parameter(n: int, ls: int, ms: int) -> dict:
-    return {main_parameter[n]: ls + (ms << 4)}
+def assemble_program(packed_data: tuple) -> dict:
+    data = unpack_ms_bit(packed_data)
+    program_dict = {}
+    for n, val in enumerate(data[:128]):
+        program_dict.update({program_parameters[n]: val})
+    program_dict.update({"seq1": data[128:144], "seq2": data[144:160], "seq3": data[160:176], "seq4": data[176:192]})
+    return program_dict
 
 
-def unpack_data(packed: tuple):
-    if packed[0] not in (PROG_PAR, SEQ_PAR, MAIN_PAR, PROG_DUMP, EDIT_DUMP, WAVE_DUMP, MAIN_DUMP, NAME_DUMP):
-        print(f"what? {packed}")
-
-    if packed[0] == MAIN_DUMP:
-        iter_data = iter(packed[1:])
-        for n, (ls, ms) in enumerate(zip(iter_data, iter_data)):
-            main_memory.update(unpack_parameter(n, ls, ms))
+def unpack_data(packed_data: tuple):
     
-    if packed[0] == MAIN_PAR:
-        main_memory.update(unpack_parameter(packed[1], packed[2], packed[3]))
+    identifier = packed_data[0]
+    data = packed_data[1:]
+    
+    if identifier == MAIN_DUMP:
+        idat = iter(data)
+        for n, (ls, ms) in enumerate(zip(idat, idat)):
+            main_memory.update({main_parameters[n]: unpack_ls_ms(ls, ms)})
+    
+    elif identifier == PROG_DUMP:
+        print(f"bank: {data[0]} program: {data[1]}")
+        banks[data[0]][data[1]].update(assemble_program(data[2:]))
 
-    # TODO algorithm that unpacks 7 bit into 8 bits and then into a dictionary
+    elif identifier == EDIT_DUMP:
+        edit_memory.update(make_program_dict(data))
+
+    elif identifier == NAME_DUMP:
+        # TODO get name into banks/programs dictionary
+        pass
+
+    elif identifier == MAIN_PAR:
+        main_memory.update({main_parameters[data[0]]: unpack_ls_ms(data[1], data[2])})
+    
+    elif identifier == PROG_PAR:
+        edit_memory.update({program_parameters[data[0]]: unpack_ls_ms(data[1], data[2])})
+
+    else:
+        print(f"[NOTICE] unknown message: {data=}")
 
 
 def queue_message(data: list) -> mido.Message:
@@ -88,39 +137,43 @@ def queue_message(data: list) -> mido.Message:
 
 def midi_in_callback(message: mido.Message):
     if message.type == 'program_change':
-        # print(f"program number: {message.program + 1}")
         main_memory.update({"program": message.program})
-        queue_message([EDIT_REQ])
-    
     elif message.type == 'control_change' and message.control == 32:
-        # print(f"bank number: {m.value + 1}")
         main_memory.update({"bank": message.value})
-        queue_message([EDIT_REQ])
-    
     elif message.type == 'sysex' and message.data[:3] == SYSEX_ID:
-        data = unpack_data(message.data[3:])
-    
+        unpack_data(message.data[3:])
     else:
-        print(message.data)
-        
+        print(f"[NOTICE] unrecognized {message=})")
 
 
 def queue_out_thread():
+    bank = None
+    program = None
     while(not midi_out.closed):
+        if bank != main_memory["bank"] or program != main_memory["program"]:
+            bank = main_memory["bank"]
+            program = main_memory["program"]
+            queue_message([EDIT_REQ])
+            queue_message([PROG_REQ, bank, program])
+            queue_message([NAME_REQ, bank, program])
         if not queue_out.empty():
             midi_out.send(queue_out.get())
             queue_out.task_done()
         sleep(OUT_SPEED)
-    print("bye!")
 
 
 if __name__ == "__main__":
     midi_in = mido.open_input('MidiKliK 1', callback=midi_in_callback)
     midi_out = mido.open_output('MidiKliK 2')
 
-    t = Thread(target=queue_out_thread)
-    t.start()
+    main_memory.update({"program": None})
+    main_memory.update({"bank": None})
 
     # update memory
     queue_message([MAIN_REQ])
     queue_message([EDIT_REQ])
+
+    qt = Thread(target=queue_out_thread)
+    qt.start()
+
+
