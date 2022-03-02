@@ -9,26 +9,23 @@ OUT_SPEED = 1 / 10         # 10 messages per second out rate
 
 SYSEX_ID = (0x01, 0x20, 0x01)
 
-PROG_PAR = 0x01
-SEQ_PAR = 0x08
-MAIN_PAR = 0x09
-
-PROG_DUMP = 0x02
-EDIT_DUMP = 0x03
-WAVE_DUMP = 0x0A
-MAIN_DUMP = 0x0F
-NAME_DUMP = 0x11
-
-PROG_REQ = 0x05
-EDIT_REQ = 0x06
-WAVE_REQ = 0x0B
-MAIN_REQ = 0x0E
-NAME_REQ = 0x10
-
-RESET = 0x04
-START_STOP = 0x12
-SHIFT_ON = 0x13
-SHIFT_OFF = 0x14
+PROG_PAR = 0x01     #     1
+PROG_DUMP = 0x02    #    10
+EDIT_DUMP = 0x03    #    11
+RESET = 0x04        #   100
+PROG_REQ = 0x05     #   101
+EDIT_REQ = 0x06     #   110
+SEQ_PAR = 0x08      #  1000
+MAIN_PAR = 0x09     #  1001
+WAVE_DUMP = 0x0A    #  1010
+WAVE_REQ = 0x0B     #  1011
+MAIN_REQ = 0x0E     #  1110
+MAIN_DUMP = 0x0F    #  1111
+NAME_REQ = 0x10     # 10000
+NAME_DUMP = 0x11    # 10001
+START_STOP = 0x12   # 10010
+SHIFT_ON = 0x13     # 10011
+SHIFT_OFF = 0x14    # 10100
 
 
 # TODO dictionary for memory
@@ -66,26 +63,21 @@ def pack_data(data: dict) -> list:
     return packed
 
 
+def unpack_parameter(n: int, ls: int, ms: int) -> dict:
+    return {main_parameter[n]: ls + (ms << 4)}
+
+
 def unpack_data(packed: tuple):
     if packed[0] not in (PROG_PAR, SEQ_PAR, MAIN_PAR, PROG_DUMP, EDIT_DUMP, WAVE_DUMP, MAIN_DUMP, NAME_DUMP):
         print(f"what? {packed}")
-    # alternate LS then MS byte
 
     if packed[0] == MAIN_DUMP:
-        # https://stackoverflow.com/questions/2990121/how-do-i-loop-through-a-list-by-twos
         iter_data = iter(packed[1:])
         for n, (ls, ms) in enumerate(zip(iter_data, iter_data)):
-            #print(f"{n}, {ls}, {ms}")
-            name = main_parameters[n]
-            value = ls + (ms << 4)
-            main_memory.update({name: value})
-        # print(main_memory)
+            main_memory.update(unpack_parameter(n, ls, ms))
     
     if packed[0] == MAIN_PAR:
-        name = main_parameters[packed[1]]
-        value = packed[2] + (packed[3] << 4)
-        main_memory.update({name: value})
-        # print(main_memory)
+        main_memory.update(unpack_parameter(packed[1], packed[2], packed[3]))
 
     # TODO algorithm that unpacks 7 bit into 8 bits and then into a dictionary
 
