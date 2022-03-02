@@ -58,14 +58,13 @@ program_parameters = (
     "modwheel_amount", "modwheel_dest", "pressure_amount", "pressure_dest", "breath_amount", "breath_dest", "foot_amount", "foot_dest"
 )
 
-queue_out = Queue(maxsize=16)
+queue_out = Queue(maxsize=32)
 
 main_memory = {}
 edit_memory = {}
 seq_memory = {}
 
 # initialize programs memory
-
 banks = {}
 programs = {}
 for x in range(4):
@@ -91,6 +90,12 @@ def unpack_ms_bit(packed_data: tuple) -> list:
     return tuple(data)
 
 
+def unpack_string(packed_data: tuple) -> str:
+    # TODO: convert list of ints to string with chr()
+    #return
+    pass
+
+
 def assemble_program(packed_data: tuple) -> dict:
     data = unpack_ms_bit(packed_data)
     program_dict = {}
@@ -101,32 +106,25 @@ def assemble_program(packed_data: tuple) -> dict:
 
 
 def unpack_data(packed_data: tuple):
-    
     identifier = packed_data[0]
     data = packed_data[1:]
-    
     if identifier == MAIN_DUMP:
         idat = iter(data)
         for n, (ls, ms) in enumerate(zip(idat, idat)):
             main_memory.update({main_parameters[n]: unpack_ls_ms(ls, ms)})
-    
     elif identifier == PROG_DUMP:
         print(f"bank: {data[0]} program: {data[1]}")
         banks[data[0]][data[1]].update(assemble_program(data[2:]))
-
     elif identifier == EDIT_DUMP:
-        edit_memory.update(make_program_dict(data))
-
+        edit_memory.update(assemble_program(data))
     elif identifier == NAME_DUMP:
         # TODO get name into banks/programs dictionary
+        #banks[data[0]][data[1]].update(unpack_string(data[2:]))
         pass
-
     elif identifier == MAIN_PAR:
         main_memory.update({main_parameters[data[0]]: unpack_ls_ms(data[1], data[2])})
-    
     elif identifier == PROG_PAR:
         edit_memory.update({program_parameters[data[0]]: unpack_ls_ms(data[1], data[2])})
-
     else:
         print(f"[NOTICE] unknown message: {data=}")
 
@@ -154,7 +152,7 @@ def queue_out_thread():
             bank = main_memory["bank"]
             program = main_memory["program"]
             queue_message([EDIT_REQ])
-            queue_message([PROG_REQ, bank, program])
+            #queue_message([PROG_REQ, bank, program])
             queue_message([NAME_REQ, bank, program])
         if not queue_out.empty():
             midi_out.send(queue_out.get())
@@ -175,5 +173,3 @@ if __name__ == "__main__":
 
     qt = Thread(target=queue_out_thread)
     qt.start()
-
-
