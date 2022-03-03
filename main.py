@@ -1,5 +1,3 @@
-#from collections import deque
-from collections import abc
 from queue import Queue
 from threading import Thread
 from time import sleep, perf_counter
@@ -7,7 +5,6 @@ from time import sleep, perf_counter
 import mido
 
 
-# 10 messages per second out rate
 OUT_SPEED = 1 / 10         
 
 SYSEX_ID = (0x01, 0x20, 0x01)
@@ -62,7 +59,6 @@ queue_out = Queue(maxsize=32)
 
 main_memory = {}
 edit_memory = {}
-seq_memory = {}
 
 # initialize programs memory
 banks = {}
@@ -78,6 +74,7 @@ def unpack_ls_ms(ls: int, ms: int) -> int:
 
 
 def unpack_ms_bit(packed_data: tuple) -> list:
+    ms_bits: int = 0
     data = []
     for n, byte in enumerate(packed_data):
         if n % 8:
@@ -87,13 +84,19 @@ def unpack_ms_bit(packed_data: tuple) -> list:
                 data.append(byte)
         else:
             ms_bits = byte
-    return tuple(data)
+    return data
 
 
-def unpack_string(packed_data: tuple) -> str:
-    # TODO: convert list of ints to string with chr()
-    #return
-    pass
+def unpack_string(packed_name: tuple) -> str:
+    name = bytes(packed_name).decode(encoding='ascii', errors='replace')
+    print(name)
+    return name
+
+
+def pack_string(name: str) -> list:
+    if len(name) in range(16):
+        return [ord(c) for c in name] + [ord(" ") for n in range(16 - len(name))]
+    raise("[WARNING]: string too long (16 characters maximum)")
 
 
 def assemble_program(packed_data: tuple) -> dict:
@@ -101,32 +104,49 @@ def assemble_program(packed_data: tuple) -> dict:
     program_dict = {}
     for n, val in enumerate(data[:128]):
         program_dict.update({program_parameters[n]: val})
-    program_dict.update({"seq1": data[128:144], "seq2": data[144:160], "seq3": data[160:176], "seq4": data[176:192]})
+    program_dict.update({"seq": [data[128:144], data[144:160], data[160:176], data[176:192]]})
     return program_dict
 
+
+def assemble_main(packed_data: tuple) -> dict:
+    pass
+
+
+# TODO get NAME into EDIT memory? we need it as working memory
 
 def unpack_data(packed_data: tuple):
     identifier = packed_data[0]
     data = packed_data[1:]
+    edit_bank = main_memory.get('bank')
+    edit_program = main_memory.get('program')
+    
     if identifier == MAIN_DUMP:
         idat = iter(data)
         for n, (ls, ms) in enumerate(zip(idat, idat)):
             main_memory.update({main_parameters[n]: unpack_ls_ms(ls, ms)})
-    elif identifier == PROG_DUMP:
-        print(f"bank: {data[0]} program: {data[1]}")
-        banks[data[0]][data[1]].update(assemble_program(data[2:]))
     elif identifier == EDIT_DUMP:
         edit_memory.update(assemble_program(data))
+        # edit_memory.update()
+        banks.get(edit_bank).get(edit_program).update(edit_memory)
+    elif identifier == PROG_DUMP:
+        # print(f"bank: {data[0]} program: {data[1]}")
+        banks[data[0]][data[1]].update(assemble_program(data[2:]))
     elif identifier == NAME_DUMP:
-        # TODO get name into banks/programs dictionary
-        #banks[data[0]][data[1]].update(unpack_string(data[2:]))
-        pass
+        banks[data[0]][data[1]].update({"name": unpack_string(data[2:])})
+    
     elif identifier == MAIN_PAR:
         main_memory.update({main_parameters[data[0]]: unpack_ls_ms(data[1], data[2])})
     elif identifier == PROG_PAR:
         edit_memory.update({program_parameters[data[0]]: unpack_ls_ms(data[1], data[2])})
+    elif identifier == SEQ_PAR:
+        edit_memory.update({program_})
+    
     else:
-        print(f"[NOTICE] unknown message: {data=}")
+        print(f"[NOTICE] {data=}")
+
+
+def pack_data(data: dict):
+    pass
 
 
 def queue_message(data: list) -> mido.Message:
@@ -152,7 +172,6 @@ def queue_out_thread():
             bank = main_memory["bank"]
             program = main_memory["program"]
             queue_message([EDIT_REQ])
-            #queue_message([PROG_REQ, bank, program])
             queue_message([NAME_REQ, bank, program])
         if not queue_out.empty():
             midi_out.send(queue_out.get())
@@ -169,7 +188,6 @@ if __name__ == "__main__":
 
     # update memory
     queue_message([MAIN_REQ])
-    queue_message([EDIT_REQ])
 
     qt = Thread(target=queue_out_thread)
     qt.start()
