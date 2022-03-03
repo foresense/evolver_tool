@@ -1,9 +1,12 @@
+# from collections import deque
 from queue import Queue
 from threading import Thread
-from time import sleep, perf_counter
+from time import sleep
+# from time import perf_counter
 
 import mido
 
+# TODO WHEN ARE THINGS A TUPLE AND WHEN ARE THEY A LIST AND WHEN ARE THEY A DEQUE
 
 OUT_SPEED = 1 / 10         
 
@@ -39,7 +42,7 @@ main_parameters = (
 program_parameters = (
     "osc1_freq", "osc1_fine", "osc1_shape", "osc1_level", "osc2_freq", "osc2_fine", "osc2_shape", "osc2_level",
     "osc3_freq", "osc3_fine", "osc3_shape", "osc3_level", "osc4_freq", "osc4_fine", "osc4_shape", "osc4_level",
-    "flt_freq", "flt_env", "flt_attack", "flt_decay", "flt_sustain", "flt_release", "flt_resonance", "flt_key",
+    "filt_freq", "filt_env", "filt_attack", "filt_decay", "filt_sustain", "filt_release", "filt_resonance", "filt_key",
     "vca_level", "vca_env", "vca_attack", "vca_decay", "vca_sustain", "vca_release", "output_pan", "volume",
     "fb_freq", "fb_level", "fb_grunge", "delay_t1", "delay_l1", "delay_fb1", "delay_fb2", "output_hack",
     "lfo1_freq", "lfo1_shape", "lfo1_amount", "lfo1_dest", "lfo2_freq", "lfo2_shape", "lfo2_amount", "lfo2_dest",
@@ -47,7 +50,7 @@ program_parameters = (
     "seq1_dest", "seq2_dest", "seq3_dest", "seq4_dest", "noise_vol", "ext_in_vol", "ext_in_mode", "input_hack",
     "osc1_glide", "sync_2-1", "bpm", "clock_div", "osc2_glide", "osc_slop", "pb_range", "key_mode",
     "osc3_glide", "fm_4-3", "osc3_shape_seq", "rm_4-3", "osc4_glide", "fm_3-4", "osc4_shape_seq", "rm_3-4",
-    "flt_poles", "flt_vel", "flt_audio_mod", "flt_split", "highpass", "mod1_source", "mod1_amount", "mod1_dest",
+    "filt_poles", "filt_vel", "filt_audio_mod", "filt_split", "highpass", "mod1_source", "mod1_amount", "mod1_dest",
     "exp-lin_env", "vca_vel", "mod2_source", "mod2_amount", "mod2_dest", "mod3_source", "mod3_amount", "mod3_dest",
     "mod4_source", "mod4_amount", "mod4_dest", "delay_t2", "delay_l2", "delay_t3", "delay_l3", "distortion",
     "lfo3_freq", "lfo3_shape", "lfo3_amount", "lfo3_dest", "lfo4_freq", "lfo4_shape", "lfo4_amount", "lfo4_dest",
@@ -55,113 +58,159 @@ program_parameters = (
     "modwheel_amount", "modwheel_dest", "pressure_amount", "pressure_dest", "breath_amount", "breath_dest", "foot_amount", "foot_dest"
 )
 
-queue_out = Queue(maxsize=32)
 
+queue_out = Queue(maxsize=64)
 main_memory = {}
 edit_memory = {}
-
-# initialize programs memory
-banks = {}
-programs = {}
-for x in range(4):
-    for y in range(128):
-        programs.update({y: dict()})
-    banks.update({x: programs})
+edit_name = None
+memory = {bank: {program: {} for program in range(128)} for bank in range(4)}
 
 
-def unpack_ls_ms(ls: int, ms: int) -> int:
+def encode_ls_ms(b: int) -> tuple:
+    return b & 0xF, b >> 4
+
+
+def decode_ls_ms(ls: int, ms: int) -> int:
     return ls + (ms << 4)
 
 
-def unpack_ms_bit(packed_data: tuple) -> list:
-    ms_bits: int = 0
-    data = []
-    for n, byte in enumerate(packed_data):
-        if n % 8:
-            if ms_bits & (1 << (n - 1)):
-                data.append(byte | 0x80)
-            else:
-                data.append(byte)
-        else:
-            ms_bits = byte
-    return data
+def encode_string(name: str) -> list:
+    if len(name) in range(17):
+        return [ord(c) for c in name] + [ord(" ") for n in range(16 - len(name))]
+    raise OverflowError("[ERROR]: string too long (16 characters maximum)")
 
 
-def unpack_string(packed_name: tuple) -> str:
+def decode_string(packed_name: tuple) -> str:
     name = bytes(packed_name).decode(encoding='ascii', errors='replace')
-    print(name)
+    print(f"[RECEIVED] {name}")
     return name
 
 
-def pack_string(name: str) -> list:
-    if len(name) in range(16):
-        return [ord(c) for c in name] + [ord(" ") for n in range(16 - len(name))]
-    raise("[WARNING]: string too long (16 characters maximum)")
+def pack_ms_bit(data: list) -> tuple:
+    packed_data = []
+    counter = 0
+    for n, byte in enumerate(data):
+        counter, cycle = divmod(n, 7)
+        ms_bit = byte >> 7
+        # our list is growing from 7 to 8 bytes per packet so we need to count that to be able to update the ms_bits byte
+        ms_bits_index = n + counter - cycle
+        if cycle == 0:
+            packed_data.append(ms_bit)
+            packed_data.append(byte & 0x7F)
+        else:
+            packed_data.append(byte & 0x7F)
+            packed_data[ms_bits_index] = packed_data[ms_bits_index] | (ms_bit << cycle)
+    return tuple(packed_data)
+
+
+def unpack_ms_bit(packed_data: tuple) -> tuple:
+    data = []
+    for n, byte in enumerate(packed_data):
+        cycle = n % 8
+        if cycle == 0:
+            ms_bits = byte
+        else:
+            if ms_bits & (1 << (cycle - 1)):
+                data.append(byte | 0x80)
+            else:
+                data.append(byte)
+    return data
+
+
+def visualize_packed_data(packed_data: tuple):
+    par = 0
+    for n, data in enumerate(packed_data):
+        if n % 8:
+            print(f"data byte: {data:03} {program_parameters[par]}")
+            par += 1
+        else:
+            print(f"bit packet: {data:08b}")
 
 
 def assemble_program(packed_data: tuple) -> dict:
     data = unpack_ms_bit(packed_data)
     program_dict = {}
+    print(data)
     for n, val in enumerate(data[:128]):
         program_dict.update({program_parameters[n]: val})
-    program_dict.update({"seq": [data[128:144], data[144:160], data[160:176], data[176:192]]})
+    program_dict.update({"seq": data[128:192]})
     return program_dict
 
 
+def serialize_program(program: dict) -> tuple:
+    data = []
+    for parameter in program_parameters:
+        data.append(program.get(parameter))
+    data.extend(program.get('seq'))
+    return pack_ms_bit(data)
+
+
 def assemble_main(packed_data: tuple) -> dict:
+    idat = iter(packed_data)
+    main_dict = {}
+    for n, (ls, ms) in enumerate(zip(idat, idat)):
+        main_dict.update({main_parameters[n]: decode_ls_ms(ls, ms)})
+    return main_dict
+
+
+def serialize_main(main: dict) -> tuple:
     pass
 
 
-# TODO get NAME into EDIT memory? we need it as working memory
-
-def unpack_data(packed_data: tuple):
+def receive_message(packed_data: tuple):
+    # TODO get NAME into EDIT memory? we need it as working memory
     identifier = packed_data[0]
     data = packed_data[1:]
-    edit_bank = main_memory.get('bank')
-    edit_program = main_memory.get('program')
-    
     if identifier == MAIN_DUMP:
-        idat = iter(data)
-        for n, (ls, ms) in enumerate(zip(idat, idat)):
-            main_memory.update({main_parameters[n]: unpack_ls_ms(ls, ms)})
+        main_memory.update(assemble_main(data))
     elif identifier == EDIT_DUMP:
         edit_memory.update(assemble_program(data))
-        # edit_memory.update()
-        banks.get(edit_bank).get(edit_program).update(edit_memory)
     elif identifier == PROG_DUMP:
-        # print(f"bank: {data[0]} program: {data[1]}")
-        banks[data[0]][data[1]].update(assemble_program(data[2:]))
+        bank_n = data[0]
+        prog_n = data[1]
+        prog_data = data[2:]
+        memory.get(bank_n).get(prog_n).update(assemble_program(prog_data))
     elif identifier == NAME_DUMP:
-        banks[data[0]][data[1]].update({"name": unpack_string(data[2:])})
-    
+        bank_n = data[0]
+        prog_n = data[1]
+        name_str = data[2:]
+        memory.get(bank_n).get(prog_n).update({"name": decode_string(name_str)})
     elif identifier == MAIN_PAR:
-        main_memory.update({main_parameters[data[0]]: unpack_ls_ms(data[1], data[2])})
+        par = data[0]
+        ls = data[1]
+        ms = data[2]
+        main_memory.update({main_parameters[par]: decode_ls_ms(ls, ms)})
     elif identifier == PROG_PAR:
-        edit_memory.update({program_parameters[data[0]]: unpack_ls_ms(data[1], data[2])})
+        edit_memory.update({program_parameters[data[0]]: decode_ls_ms(data[1], data[2])})
     elif identifier == SEQ_PAR:
-        edit_memory.update({program_})
-    
+        edit_memory.get("seq")[data[0]] = decode_ls_ms(data[1], data[2])
     else:
         print(f"[NOTICE] {data=}")
 
 
-def pack_data(data: dict):
-    pass
+def save_edit_memory(bank: int, program: int, name: str = 16 * chr(32)):
+    queue_message([PROG_DUMP, bank, program, *serialize_program(edit_memory)])
+    queue_message([NAME_DUMP, bank, program, *encode_string(name)])
 
 
-def queue_message(data: list) -> mido.Message:
+def queue_message(data: list):
     queue_out.put(mido.Message(type='sysex', data=(*SYSEX_ID, *data)))
 
 
 def midi_in_callback(message: mido.Message):
+    # print(f"[RECEIVING]: {message}")
     if message.type == 'program_change':
         main_memory.update({"program": message.program})
     elif message.type == 'control_change' and message.control == 32:
         main_memory.update({"bank": message.value})
-    elif message.type == 'sysex' and message.data[:3] == SYSEX_ID:
-        unpack_data(message.data[3:])
-    else:
-        print(f"[NOTICE] unrecognized {message=})")
+    elif message.type == 'sysex':
+        if message.data[:3] == SYSEX_ID:
+            receive_message(message.data[3:])
+        else:
+            print(f"[WARNING]: Unknown SysEx")
+
+    #else:
+    #    print(f"[NOTICE] unrecognized {message=})")
 
 
 def queue_out_thread():
@@ -171,10 +220,15 @@ def queue_out_thread():
         if bank != main_memory["bank"] or program != main_memory["program"]:
             bank = main_memory["bank"]
             program = main_memory["program"]
-            queue_message([EDIT_REQ])
+            print(f"[RECEIVED] program change {bank}-{program}")
             queue_message([NAME_REQ, bank, program])
+            queue_message([EDIT_REQ])
+            #queue_message([PROG_REQ, bank, program])
+            memory.get(bank).get(program).update(edit_memory)
         if not queue_out.empty():
-            midi_out.send(queue_out.get())
+            message = queue_out.get()
+            print(f"[SENDING]: {message}")
+            midi_out.send(message)
             queue_out.task_done()
         sleep(OUT_SPEED)
 
@@ -188,6 +242,7 @@ if __name__ == "__main__":
 
     # update memory
     queue_message([MAIN_REQ])
+    #send_message(MAIN_REQ)
 
     qt = Thread(target=queue_out_thread)
     qt.start()
