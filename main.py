@@ -6,6 +6,9 @@ from time import sleep
 
 import mido
 
+
+VERBOSE = 1
+
 # TODO WHEN ARE THINGS A TUPLE AND WHEN ARE THEY A LIST AND WHEN ARE THEY A DEQUE
 
 OUT_SPEED = 1 / 10         
@@ -81,9 +84,7 @@ def encode_string(name: str) -> list:
 
 
 def decode_string(packed_name: tuple) -> str:
-    name = bytes(packed_name).decode(encoding='ascii', errors='replace')
-    print(f"[RECEIVED] {name}")
-    return name
+    return bytes(packed_name).decode(encoding='ascii', errors='replace')
 
 
 def pack_ms_bit(data: list) -> tuple:
@@ -117,20 +118,9 @@ def unpack_ms_bit(packed_data: tuple) -> tuple:
     return data
 
 
-def visualize_packed_data(packed_data: tuple):
-    par = 0
-    for n, data in enumerate(packed_data):
-        if n % 8:
-            print(f"data byte: {data:03} {program_parameters[par]}")
-            par += 1
-        else:
-            print(f"bit packet: {data:08b}")
-
-
 def assemble_program(packed_data: tuple) -> dict:
     data = unpack_ms_bit(packed_data)
     program_dict = {}
-    print(data)
     for n, val in enumerate(data[:128]):
         program_dict.update({program_parameters[n]: val})
     program_dict.update({"seq": data[128:192]})
@@ -165,16 +155,23 @@ def receive_message(packed_data: tuple):
         main_memory.update(assemble_main(data))
     elif identifier == EDIT_DUMP:
         edit_memory.update(assemble_program(data))
+        if VERBOSE:
+            print(f"[RECEIVED] {edit_memory=}")
     elif identifier == PROG_DUMP:
         bank_n = data[0]
         prog_n = data[1]
         prog_data = data[2:]
         memory.get(bank_n).get(prog_n).update(assemble_program(prog_data))
+        if VERBOSE:
+            print(f"[RECEIVED] Program: {bank_n:01}_{prog_n:03} {memory.get(bank_n).get(prog_n)}")
     elif identifier == NAME_DUMP:
         bank_n = data[0]
         prog_n = data[1]
-        name_str = data[2:]
-        memory.get(bank_n).get(prog_n).update({"name": decode_string(name_str)})
+        ascii_list = data[2:]
+        name_dict = {"name": decode_string(ascii_list)}
+        memory.get(bank_n).get(prog_n).update(name_dict)
+        if(VERBOSE):
+            print(f"[RECEIVED] {name_dict}")
     elif identifier == MAIN_PAR:
         par = data[0]
         ls = data[1]
@@ -185,12 +182,24 @@ def receive_message(packed_data: tuple):
     elif identifier == SEQ_PAR:
         edit_memory.get("seq")[data[0]] = decode_ls_ms(data[1], data[2])
     else:
-        print(f"[NOTICE] {data=}")
+        if(VERBOSE):
+            print(f"[NOTICE] {data=}")
 
 
-def save_edit_memory(bank: int, program: int, name: str = 16 * chr(32)):
+def save_edit_memory(bank: int, program: int, name: str):
     queue_message([PROG_DUMP, bank, program, *serialize_program(edit_memory)])
     queue_message([NAME_DUMP, bank, program, *encode_string(name)])
+
+
+# TODO find out if this is working
+def save_sysex(data: list, filename: str):
+    with open(filename, 'w') as file:
+        file.write(mido.Message(type='sysex', data=(*SYSEX_ID, *data)).bytes())
+
+
+# TODO something like this. make sure the interface is consequent.
+def load_sysex(filename: str) -> dict:
+    pass
 
 
 def queue_message(data: list):
@@ -198,7 +207,6 @@ def queue_message(data: list):
 
 
 def midi_in_callback(message: mido.Message):
-    # print(f"[RECEIVING]: {message}")
     if message.type == 'program_change':
         main_memory.update({"program": message.program})
     elif message.type == 'control_change' and message.control == 32:
@@ -206,28 +214,30 @@ def midi_in_callback(message: mido.Message):
     elif message.type == 'sysex':
         if message.data[:3] == SYSEX_ID:
             receive_message(message.data[3:])
-        else:
+        elif VERBOSE:
             print(f"[WARNING]: Unknown SysEx")
-
     #else:
-    #    print(f"[NOTICE] unrecognized {message=})")
+    #     print(f"[NOTICE] unrecognized {message=})")
 
 
 def queue_out_thread():
     bank = None
     program = None
+    
     while(not midi_out.closed):
         if bank != main_memory["bank"] or program != main_memory["program"]:
             bank = main_memory["bank"]
             program = main_memory["program"]
-            print(f"[RECEIVED] program change {bank}-{program}")
+            if VERBOSE:
+                print(f"[RECEIVED] program change {bank}-{program}")
             queue_message([NAME_REQ, bank, program])
             queue_message([EDIT_REQ])
             #queue_message([PROG_REQ, bank, program])
             memory.get(bank).get(program).update(edit_memory)
         if not queue_out.empty():
             message = queue_out.get()
-            print(f"[SENDING]: {message}")
+            if VERBOSE:
+                (f"[SENDING]: {message}")
             midi_out.send(message)
             queue_out.task_done()
         sleep(OUT_SPEED)
