@@ -1,36 +1,38 @@
-# from collections import deque
+import json
 from queue import Queue
 from threading import Thread
 from time import sleep
-# from time import perf_counter
 
 import mido
 
 
 VERBOSE = 1
 
+MIDI_IN = "MidiKliK 1"
+MIDI_OUT = "MidiKliK 2"
+
 # TODO WHEN ARE THINGS A TUPLE AND WHEN ARE THEY A LIST AND WHEN ARE THEY A DEQUE
 
 OUT_SPEED = 1 / 10         
 
-SYSEX_ID = (0x01, 0x20, 0x01)
+# CC
+BANK_CHANGE = 0x20
 
+# SYSEX
+SYSEX_ID = (0x01, 0x20, 0x01)
 PROG_PAR = 0x01
 SEQ_PAR = 0x08
 MAIN_PAR = 0x09
-
 PROG_DUMP = 0x02
 EDIT_DUMP = 0x03
 WAVE_DUMP = 0x0A
 MAIN_DUMP = 0x0F
 NAME_DUMP = 0x11
-
 PROG_REQ = 0x05
 EDIT_REQ = 0x06
 WAVE_REQ = 0x0B
 MAIN_REQ = 0x0E
 NAME_REQ = 0x10
-
 RESET = 0x04
 START_STOP = 0x12
 SHIFT_ON = 0x13
@@ -61,12 +63,12 @@ program_parameters = (
     "modwheel_amount", "modwheel_dest", "pressure_amount", "pressure_dest", "breath_amount", "breath_dest", "foot_amount", "foot_dest"
 )
 
-
-queue_out = Queue(maxsize=64)
 main_memory = {}
 edit_memory = {}
 edit_name = None
-memory = {bank: {program: {} for program in range(128)} for bank in range(4)}
+program_memory = {bank: {program: {} for program in range(128)} for bank in range(4)}
+
+queue_out = Queue(maxsize=1024)
 
 
 def encode_ls_ms(b: int) -> tuple:
@@ -80,11 +82,13 @@ def decode_ls_ms(ls: int, ms: int) -> int:
 def encode_string(name: str) -> list:
     if len(name) in range(17):
         return [ord(c) for c in name] + [ord(" ") for n in range(16 - len(name))]
-    raise OverflowError("[ERROR]: string too long (16 characters maximum)")
+    else:
+        raise OverflowError("[ERROR]: string too long (16 characters maximum)")
 
 
 def decode_string(packed_name: tuple) -> str:
-    return bytes(packed_name).decode(encoding='ascii', errors='replace')
+    readable = [c if c in range(32, 127) else 32 for c in packed_name]
+    return bytes(readable).decode(encoding='ascii')
 
 
 def pack_ms_bit(data: list) -> tuple:
@@ -154,55 +158,106 @@ def receive_message(packed_data: tuple):
     if identifier == MAIN_DUMP:
         main_memory.update(assemble_main(data))
     elif identifier == EDIT_DUMP:
-        edit_memory.update(assemble_program(data))
+        prog_dict = assemble_program(data)
+        edit_memory.update(prog_dict)
         if VERBOSE:
-            print(f"[RECEIVED] {edit_memory=}")
+            print(f"[RECEIVED] EDIT MEMORY -> {prog_dict}")
     elif identifier == PROG_DUMP:
-        bank_n = data[0]
-        prog_n = data[1]
-        prog_data = data[2:]
-        memory.get(bank_n).get(prog_n).update(assemble_program(prog_data))
+        bank = data[0]
+        program = data[1]
+        prog_dict = assemble_program(data[2:])
+        program_memory.get(bank).get(program).update(prog_dict)
         if VERBOSE:
-            print(f"[RECEIVED] Program: {bank_n:01}_{prog_n:03} {memory.get(bank_n).get(prog_n)}")
+            print(f"[RECEIVED] BANK {bank} / PROGRAM {program} -> {prog_dict}")
     elif identifier == NAME_DUMP:
-        bank_n = data[0]
-        prog_n = data[1]
-        ascii_list = data[2:]
-        name_dict = {"name": decode_string(ascii_list)}
-        memory.get(bank_n).get(prog_n).update(name_dict)
+        bank = data[0]
+        program = data[1]
+        name_str = decode_string(data[2:])
+        program_memory.get(bank).get(program).update({"name": name_str})
         if(VERBOSE):
-            print(f"[RECEIVED] {name_dict}")
+            print(f"[RECEIVED] BANK {bank} / PROGRAM {program} -> {name_str}")
     elif identifier == MAIN_PAR:
         par = data[0]
-        ls = data[1]
-        ms = data[2]
-        main_memory.update({main_parameters[par]: decode_ls_ms(ls, ms)})
+        val = decode_ls_ms(data[1], data[2])
+        main_memory.update({main_parameters[par]: val})
     elif identifier == PROG_PAR:
-        edit_memory.update({program_parameters[data[0]]: decode_ls_ms(data[1], data[2])})
+        par = data[0]
+        val = decode_ls_ms(data[1], data[2])
+        edit_memory.update({program_parameters[par]: val})
     elif identifier == SEQ_PAR:
-        edit_memory.get("seq")[data[0]] = decode_ls_ms(data[1], data[2])
+        step = data[0]
+        val = decode_ls_ms(data[1], data[2])
+        edit_memory.get("seq")[step] = val
     else:
         if(VERBOSE):
             print(f"[NOTICE] {data=}")
 
 
-def save_edit_memory(bank: int, program: int, name: str):
-    queue_message([PROG_DUMP, bank, program, *serialize_program(edit_memory)])
-    queue_message([NAME_DUMP, bank, program, *encode_string(name)])
+def send_program(bank: int, program: int, memory_dict: dict = edit_memory):
+    queue_sysex([PROG_DUMP, bank, program, *serialize_program(memory_dict)])
 
 
-# TODO find out if this is working
-def save_sysex(data: list, filename: str):
+def send_name(bank: int, program: int, name: str):
+    queue_sysex([NAME_DUMP, bank, program, *encode_string(name)])
+
+
+def send_edit(memory_dict: dict = edit_memory):
+    queue_sysex([EDIT_DUMP, *serialize_program(memory_dict)])
+
+
+def req_main():
+    queue_sysex([MAIN_REQ])
+
+
+def req_edit():
+    queue_sysex([EDIT_REQ])
+
+
+def req_program(bank: int, program: int):
+    queue_sysex([PROG_REQ, bank, program])
+
+
+def req_name(bank: int, program: int):
+    queue_sysex([NAME_REQ, bank, program])
+
+
+def req_wave(wave_number: int):
+    queue_sysex([WAVE_REQ, wave_number])
+
+
+def save_json(filename: str, memory_dict: dict = edit_memory):
     with open(filename, 'w') as file:
-        file.write(mido.Message(type='sysex', data=(*SYSEX_ID, *data)).bytes())
+        json.dump(memory_dict, file, indent=2)
 
 
-# TODO something like this. make sure the interface is consequent.
-def load_sysex(filename: str) -> dict:
+def load_json(filename: str) -> dict:
+    with open(filename, 'r') as file:
+        return json.load(file)
+
+
+def save_sysex(filename: str, memory_dict: dict = edit_memory):
+    # TODO serialize output and write valid sysex strings
+    #mido.write_syx_file(filename)
+    # file.write(mido.Message(type='sysex', data=(*SYSEX_ID, *pdata)).bytes())
     pass
 
 
-def queue_message(data: list):
+def load_sysex(filename: str) -> dict:
+    sysex_stream = mido.read_syx_file(filename)
+    # TODO deserialize sysex, first chop it in parts, then put it through receive message
+    pass
+
+
+def program_change(program: int, *, bank: int = None):
+    if bank in range(4):
+        main_memory['bank'] = bank
+        queue_out.put(mido.Message(type="control_change", control=BANK_CHANGE, value=bank))
+    if program in range(128):
+        main_memory['program'] = program
+        queue_out.put(mido.Message(type="program_change", program=program))
+
+
+def queue_sysex(data: list):
     queue_out.put(mido.Message(type='sysex', data=(*SYSEX_ID, *data)))
 
 
@@ -215,25 +270,18 @@ def midi_in_callback(message: mido.Message):
         if message.data[:3] == SYSEX_ID:
             receive_message(message.data[3:])
         elif VERBOSE:
-            print(f"[WARNING]: Unknown SysEx")
-    #else:
-    #     print(f"[NOTICE] unrecognized {message=})")
+            print(f"[WARNING]: unknown sysex: {message.data}")
 
 
 def queue_out_thread():
     bank = None
     program = None
-    
     while(not midi_out.closed):
-        if bank != main_memory["bank"] or program != main_memory["program"]:
-            bank = main_memory["bank"]
-            program = main_memory["program"]
-            if VERBOSE:
-                print(f"[RECEIVED] program change {bank}-{program}")
-            queue_message([NAME_REQ, bank, program])
-            queue_message([EDIT_REQ])
-            #queue_message([PROG_REQ, bank, program])
-            memory.get(bank).get(program).update(edit_memory)
+        if bank != main_memory.get('bank') or program != main_memory.get('program'):
+            bank = main_memory.get('bank')
+            program = main_memory.get('program')
+            req_edit()
+            program_memory.get(bank).get(program).update(edit_memory)
         if not queue_out.empty():
             message = queue_out.get()
             if VERBOSE:
@@ -244,15 +292,8 @@ def queue_out_thread():
 
 
 if __name__ == "__main__":
-    midi_in = mido.open_input('MidiKliK 1', callback=midi_in_callback)
-    midi_out = mido.open_output('MidiKliK 2')
-
-    main_memory.update({"program": None})
-    main_memory.update({"bank": None})
-
-    # update memory
-    queue_message([MAIN_REQ])
-    #send_message(MAIN_REQ)
-
-    qt = Thread(target=queue_out_thread)
-    qt.start()
+    midi_in = mido.open_input(MIDI_IN, callback=midi_in_callback)
+    midi_out = mido.open_output(MIDI_OUT)
+    req_main()
+    qot = Thread(target=queue_out_thread)
+    qot.start()
