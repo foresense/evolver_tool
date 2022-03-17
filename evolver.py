@@ -160,85 +160,6 @@ def serialize_waveshape(waveshape: list) -> list:
     return pack_ms_bit(data)
 
 
-def receive_message(packed_data: tuple):
-    identifier = packed_data[0]
-    data = packed_data[1:]
-    if identifier == PROG_DUMP:
-        bank = data[0]
-        program = data[1]
-        prog_dict = assemble_program(data[2:])
-        program_memory.get(bank).get(program).update(prog_dict)
-        log.info(f"received {bank=} {program=} -> {prog_dict=}")
-    elif identifier == EDIT_DUMP:
-        prog_dict = assemble_program(data)
-        edit_memory.update(prog_dict)
-        log.info(f"received {prog_dict}")
-    elif identifier == WAVE_DUMP:
-        wave_number = data[0]
-        wave_shape = assemble_waveshape(data[1:])
-        wave_memory[wave_number] = wave_shape
-        log.info(f"received waveshape {wave_number}: {wave_memory[wave_number]}")
-    elif identifier == MAIN_DUMP:
-        main_dict = assemble_main(data)
-        main_memory.update(main_dict)
-        log.info(f"received {main_dict}")
-    elif identifier == NAME_DUMP:
-        bank = data[0]
-        program = data[1]
-        name_str = decode_string(data[2:])
-        program_memory.get(bank).get(program).update({"name": name_str})
-        log.info(f"received {bank=} {program=} -> {name_str=}")
-    elif identifier == MAIN_PAR:
-        par = parameters.main[data[0]]
-        val = decode_ls_ms(data[1], data[2])
-        main_memory.update({par: val})
-        log.info(f"received {par=} {val=}")
-    elif identifier == PROG_PAR:
-        par = parameters.program[data[0]]
-        val = decode_ls_ms(data[1], data[2])
-        edit_memory.update({par: val})
-        log.info(f"received {par=} {val=}")
-    elif identifier == SEQ_PAR:
-        step = data[0]
-        val = decode_ls_ms(data[1], data[2])
-        edit_memory.get("seq")[step] = val
-        log.info(f"received {step=} {val=}")
-    else:
-        log.warning(f"received unknown {data=}")
-
-
-def send_program(bank: int, program: int, memory_dict: dict = edit_memory):
-    queue_sysex([PROG_DUMP, bank, program, *serialize_program(memory_dict)])
-
-
-def send_name(bank: int, program: int, name: str):
-    queue_sysex([NAME_DUMP, bank, program, *encode_string(name)])
-
-
-def send_edit(memory_dict: dict = edit_memory):
-    queue_sysex([EDIT_DUMP, *serialize_program(memory_dict)])
-
-
-def req_program(bank: int, program: int):
-    queue_sysex([PROG_REQ, bank, program])
-
-
-def req_edit():
-    queue_sysex([EDIT_REQ])
-
-
-def req_wave(wave_number: int):
-    queue_sysex([WAVE_REQ, wave_number])
-
-
-def req_main():
-    queue_sysex([MAIN_REQ])
-
-
-def req_name(bank: int, program: int):
-    queue_sysex([NAME_REQ, bank, program])
-
-
 def save_json(filename: str, memory_dict: dict = edit_memory):
     with open(filename, "w") as file:
         json.dump(memory_dict, file, indent=2)
@@ -298,16 +219,89 @@ def queue_sysex(data: list):
     log.debug(f"queued {message} ({queue_out.qsize()=})")
 
 
+def send_program(bank: int, program: int, memory_dict: dict = edit_memory):
+    queue_sysex([PROG_DUMP, bank, program, *serialize_program(memory_dict)])
+
+
+def send_name(bank: int, program: int, name: str):
+    queue_sysex([NAME_DUMP, bank, program, *encode_string(name)])
+
+
+def send_edit(memory_dict: dict = edit_memory):
+    queue_sysex([EDIT_DUMP, *serialize_program(memory_dict)])
+
+
+def req_program(bank: int, program: int):
+    queue_sysex([PROG_REQ, bank, program])
+
+
+def req_edit():
+    queue_sysex([EDIT_REQ])
+
+
+def req_wave(wave_number: int):
+    queue_sysex([WAVE_REQ, wave_number])
+
+
+def req_main():
+    queue_sysex([MAIN_REQ])
+
+
+def req_name(bank: int, program: int):
+    queue_sysex([NAME_REQ, bank, program])
+
+
+
 def midi_in_callback(message: mido.Message):
     if message.type == "program_change":
         main_memory.update({"program": message.program})
     elif message.type == "control_change" and message.control == 32:
         main_memory.update({"bank": message.value})
-    elif message.type == "sysex":
-        if message.data[:3] == SYSEX_ID:
-            receive_message(message.data[3:])
+    elif message.type == "sysex" and message.data[:3] == SYSEX_ID:
+        identifier = packed_data[0]
+        data = packed_data[1:]
+        if identifier == PROG_DUMP:
+            bank = data[0]
+            program = data[1]
+            prog_dict = assemble_program(data[2:])
+            program_memory.get(bank).get(program).update(prog_dict)
+            log.info(f"received {bank=} {program=} -> {prog_dict=}")
+        elif identifier == EDIT_DUMP:
+            prog_dict = assemble_program(data)
+            edit_memory.update(prog_dict)
+            log.info(f"received {prog_dict}")
+        elif identifier == WAVE_DUMP:
+            wave_number = data[0]
+            wave_shape = assemble_waveshape(data[1:])
+            wave_memory[wave_number] = wave_shape
+            log.info(f"received waveshape {wave_number}: {wave_memory[wave_number]}")
+        elif identifier == MAIN_DUMP:
+            main_dict = assemble_main(data)
+            main_memory.update(main_dict)
+            log.info(f"received {main_dict}")
+        elif identifier == NAME_DUMP:
+            bank = data[0]
+            program = data[1]
+            name_str = decode_string(data[2:])
+            program_memory.get(bank).get(program).update({"name": name_str})
+            log.info(f"received {bank=} {program=} -> {name_str=}")
+        elif identifier == MAIN_PAR:
+            par = parameters.main[data[0]]
+            val = decode_ls_ms(data[1], data[2])
+            main_memory.update({par: val})
+            log.info(f"received {par=} {val=}")
+        elif identifier == PROG_PAR:
+            par = parameters.program[data[0]]
+            val = decode_ls_ms(data[1], data[2])
+            edit_memory.update({par: val})
+            log.info(f"received {par=} {val=}")
+        elif identifier == SEQ_PAR:
+            step = data[0]
+            val = decode_ls_ms(data[1], data[2])
+            edit_memory.get("seq")[step] = val
+            log.info(f"received {step=} {val=}")
         else:
-            log.warning(f"received unknown sysex {message}")
+            log.warning(f"received unknown {data=}")
     else:
         log.warning(f"received unknown {message}")
 
