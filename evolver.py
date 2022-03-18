@@ -8,15 +8,6 @@ import mido
 
 import parameters
 
-log = logging.getLogger("evolver")
-log_format = logging.Formatter("[%(levelname)s:%(asctime)s] %(message)s")
-log_format.datefmt = '%Y%m%d_%H%M%S'
-log_stdout = logging.StreamHandler()
-log_stdout.setFormatter(log_format)
-log.addHandler(log_stdout)
-log.setLevel(logging.INFO)
-
-
 MIDI_IN = "MidiKliK 3"
 MIDI_OUT = "MidiKliK 4"
 
@@ -323,16 +314,19 @@ def queue_out_thread():
             log.info(f"sent {message}")
             log.debug(f"{queue_out.qsize()=}")
         sleep(OUT_SPEED)
-    log.info(f"goodbye! {midi_out.closed=}")
-
-
-def test_ls_ms(o):
-    a = iter(unpack_ms_bit(wave_memory[o]))
-    for x, y in zip(a, a):
-        print(f"{x:08b} {y:08b}")
+    log.info(f"goodbye. {midi_out.closed=}")
 
 
 if __name__ == "__main__":
+
+    log = logging.getLogger("evolver")
+    log_format = logging.Formatter("[%(asctime)s %(levelname)s] %(message)s")
+    log_format.datefmt = '%Y%m%d %H%M%S'
+    log_stdout = logging.StreamHandler()
+    log_stdout.setFormatter(log_format)
+    log.addHandler(log_stdout)
+    log.setLevel(logging.INFO)
+
     midi_in = mido.open_input(MIDI_IN, callback=midi_in_callback)
     midi_out = mido.open_output(MIDI_OUT)
     req_main()
