@@ -249,8 +249,8 @@ def midi_in_callback(message: mido.Message):
     elif message.type == "control_change" and message.control == 32:
         main_memory.update({"bank": message.value})
     elif message.type == "sysex" and message.data[:3] == SYSEX_ID:
-        identifier = packed_data[0]
-        data = packed_data[1:]
+        identifier = message.data[3]
+        data = message.data[4:]
         if identifier == PROG_DUMP:
             bank = data[0]
             program = data[1]
