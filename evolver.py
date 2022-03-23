@@ -47,6 +47,10 @@ wave_memory = {waveshape: [0 for n in range(128)] for waveshape in range(128)}
 queue_out = Queue(maxsize=2048)
 
 
+# TODO Introduce parameter limits
+# TODO Modularize
+
+
 def encode_ls_ms(b: int) -> tuple:
     return b & 0xF, b >> 4
 
@@ -176,18 +180,18 @@ def load_sysex(filename: str) -> dict:
 
 
 def save_waveshape(filename: str, wave_number: int):
-    with wave.open(filename, 'wb') as wavefile:
+    with wave.open(filename, "wb") as wavefile:
         wavefile.setnchannels(1)
         wavefile.setframerate(44100)
         wavefile.setsampwidth(2)
         wavefile.setnframes(128)
         for point in wave_memory[wave_number]:
-            wavefile.writeframes(bytes([point & 0xff, point >> 8]))
+            wavefile.writeframes(bytes([point & 0xFF, point >> 8]))
 
 
 def load_waveshape(filename: str) -> dict:
     # TODO load from standard pcm .wav
-    with wave.open(filename, 'rb') as wavefile:
+    with wave.open(filename, "rb") as wavefile:
         pass
     waveshape = [0 for n in range(128)]
     return waveshape
@@ -240,7 +244,6 @@ def req_main():
 
 def req_name(bank: int, program: int):
     queue_sysex([NAME_REQ, bank, program])
-
 
 
 def midi_in_callback(message: mido.Message):
@@ -300,13 +303,14 @@ def midi_in_callback(message: mido.Message):
 def queue_out_thread():
     bank = None
     program = None
+    req_main()
     while not midi_out.closed:
         if bank != main_memory.get("bank") or program != main_memory.get("program"):
             bank = main_memory.get("bank")
             program = main_memory.get("program")
             log.info(f"program change {bank=} {program=}")
             req_edit()
-            program_memory.get(bank).get(program).update(edit_memory)
+            program_memory[bank][program].update(edit_memory)
         if not queue_out.empty():
             message = queue_out.get()
             midi_out.send(message)
@@ -318,17 +322,23 @@ def queue_out_thread():
 
 
 if __name__ == "__main__":
-
+    # logging starts here
     log = logging.getLogger("evolver")
     log_format = logging.Formatter("[%(asctime)s %(levelname)s] %(message)s")
-    log_format.datefmt = '%Y%m%d %H%M%S'
+    log_format.datefmt = "%Y%m%d %H%M%S"
     log_stdout = logging.StreamHandler()
     log_stdout.setFormatter(log_format)
     log.addHandler(log_stdout)
     log.setLevel(logging.INFO)
-
-    midi_in = mido.open_input(MIDI_IN, callback=midi_in_callback)
-    midi_out = mido.open_output(MIDI_OUT)
-    req_main()
+    # midi in callback function
+    if MIDI_IN in mido.get_input_names():
+        midi_in = mido.open_input(MIDI_IN, callback=midi_in_callback)
+    else:
+        raise NameError(f"No such port: {MIDI_IN=}")
+    # midi out thread
+    if MIDI_OUT in mido.get_output_names():
+        midi_out = mido.open_output(MIDI_OUT)
+    else:
+        raise NameError(f"No such port: {MIDI_OUT=}")
     qot = Thread(target=queue_out_thread)
     qot.start()

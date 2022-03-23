@@ -17,6 +17,13 @@ main = (
     "midi_dump",
 )
 
+main_new = (
+    {"program": range(128)},
+    {"bank": range(4)},
+    # etc
+)
+
+
 program = (
     "osc1_freq",
     "osc1_fine",
