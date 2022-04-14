@@ -1,54 +1,93 @@
 import json
+#import yaml
 import logging
+import wave
+
 from queue import Queue
 from threading import Thread
 from time import sleep
-import wave
+from enum import IntEnum
+
 import mido
+from mido import Message
 
 import parameters
 
-MIDI_IN = "MidiKliK 3"
-MIDI_OUT = "MidiKliK 4"
+
+log = logging.getLogger("evolver")
+log_format = logging.Formatter("[%(asctime)s %(levelname)s] %(message)s")
+log_format.datefmt = "%Y.%m.%d %H:%M:%S"
+log_stdout = logging.StreamHandler()
+log_stdout.setFormatter(log_format)
+log.addHandler(log_stdout)
+log.setLevel(logging.DEBUG)
+
+
+MIDI_IN = "MidiKliK 1"
+MIDI_OUT = "MidiKliK 2"
 
 OUT_SPEED = 1 / 10
 
-CC_MODWHEEL = 0x01
-CC_BANK_CHANGE = 0x20
+# OLD WAY
+EVOLVER_ID = 0x01, 0x20, 0x01
+# NEW WAY
+SYSEX_ID = 0x01, 0x20, 0x01
 
-SYSEX_ID = (0x01, 0x20, 0x01)
-EVOLVER_ID = 0x20
 
-PROG_PAR = 0x01
-SEQ_PAR = 0x08
-MAIN_PAR = 0x09
+class CC(IntEnum):
+    MODWHEEL = 0x01
+    BANK_CHANGE = 0x20
 
-PROG_DUMP = 0x02
-EDIT_DUMP = 0x03
-WAVE_DUMP = 0x0A
-MAIN_DUMP = 0x0F
-NAME_DUMP = 0x11
 
-PROG_REQ = 0x05
-EDIT_REQ = 0x06
-WAVE_REQ = 0x0B
-MAIN_REQ = 0x0E
-NAME_REQ = 0x10
+class Parameter(IntEnum):
+    PROGRAM = 0x01
+    SEQUENCER = 0x08
+    MAIN = 0x09
 
-RESET = 0x04
-START_STOP = 0x12
-SHIFT_ON = 0x13
-SHIFT_OFF = 0x14
 
-main_memory = {}
-edit_memory = {}
-program_memory = {bank: {program: {} for program in range(128)} for bank in range(4)}
-wave_memory = {waveshape: [0 for n in range(128)] for waveshape in range(128)}
+class Dump(IntEnum):
+    PROGRAM = 0x02
+    EDIT = 0x03
+    WAVESHAPE = 0x0A
+    MAIN = 0x0F
+    NAME = 0x11
+
+
+# TODO change class name
+class DumpLength(IntEnum):
+    PROGRAM = 220
+    WAVESHAPE = 293
+    MAIN = 32
+    NAME = 16
+
+
+class Request(IntEnum):
+    PROGRAM = 0x05
+    EDIT = 0x06
+    WAVESHAPE = 0x0B
+    MAIN = 0x0E
+    NAME = 0x10
+
+
+class Command(IntEnum):
+    RESET = 0x04
+    START_STOP = 0x12
+    SHIFT_ON = 0x13
+    SHIFT_OFF = 0x14
+
+
+memory = {
+    "main": {parameters.main[n]: 0 for n in range(16)},
+    "edit": {parameters.program[n]: 0 for n in range(128)},
+    "patch": {b: {p: {parameters.program[n]: 0 for n in range(128)} for p in range(128)} for b in range(4)},
+    "waveshape": {w: bytes(256) for w in range(128)},
+    "name": {b: {p: "unknown         " for p in range(128)} for b in range(4)}
+}
+
+# TODO main and edit should be a dataclass
+
+
 queue_out = Queue(maxsize=2048)
-
-
-# TODO Introduce parameter limits
-# TODO Modularize
 
 
 def encode_ls_ms(b: int) -> tuple:
@@ -56,7 +95,7 @@ def encode_ls_ms(b: int) -> tuple:
 
 
 def decode_ls_ms(ls: int, ms: int) -> int:
-    return ls + (ms << 4)
+    return ls | ms << 4
 
 
 def encode_string(name: str) -> list:
@@ -66,9 +105,13 @@ def encode_string(name: str) -> list:
         raise OverflowError("[ERROR]: string too long (16 characters maximum)")
 
 
-def decode_string(packed_name: tuple) -> str:
-    readable = [c if c in range(32, 127) else 32 for c in packed_name]
-    return bytes(readable).decode(encoding="ascii")
+def unpack_ls_ms(data: tuple) -> tuple:
+    i = iter(data)
+    return tuple(ls | ms << 4 for (ls, ms) in zip(i, i))
+
+
+def unpack_str(data: tuple) -> str:
+    return bytes(data).decode(encoding="ascii")
 
 
 def pack_ms_bit(data: list) -> tuple:
@@ -77,7 +120,7 @@ def pack_ms_bit(data: list) -> tuple:
     for n, byte in enumerate(data):
         count, cycle = divmod(n, 7)
         ms_bit = byte >> 7
-        # growing from 7 bytes to 8 bytes per cycle:
+        # growing from 7 bytes to 8 bytes per cycle
         ms_bits_index = n + count - cycle
         if cycle == 0:
             # cycle starts with ms_bit_byte is 8th byte
@@ -89,7 +132,7 @@ def pack_ms_bit(data: list) -> tuple:
     return tuple(packed_data)
 
 
-def unpack_ms_bit(packed_data: tuple) -> tuple:
+def unpack_ms_bit(packed_data: tuple) -> list:
     data = []
     for n, byte in enumerate(packed_data):
         cycle = n % 8
@@ -103,40 +146,59 @@ def unpack_ms_bit(packed_data: tuple) -> tuple:
     return data
 
 
-def assemble_program(packed_data: tuple) -> dict:
-    program_dict = {}
-    data = unpack_ms_bit(packed_data)
-    for n, val in enumerate(data[:128]):
-        par = parameters.program[n]
-        program_dict.update({par: val})
-    program_dict.update({"seq": data[128:192]})
-    return program_dict
+def save_json(filename: str, memory_dict: dict = memory.get("edit")):
+    with open(filename, "w") as file:
+        json.dump(memory_dict, file, indent=2)
 
 
-def assemble_waveshape(packed_data: tuple) -> dict:
-    waveshape = []
-    # pack to 16-bit values
-    idat = iter(unpack_ms_bit(packed_data))
-    for ls, ms in zip(idat, idat):
-        waveshape.append(ls + (ms << 8))
-    return waveshape
+def load_json(filename: str) -> dict:
+    with open(filename, "r") as file:
+        return json.load(file)
 
 
-def assemble_main(packed_data: tuple) -> dict:
-    main_dict = {}
-    idat = iter(packed_data)
-    for n, (ls, ms) in enumerate(zip(idat, idat)):
-        par = parameters.main[n]
-        val = decode_ls_ms(ls, ms)
-        main_dict.update({par: val})
-    return main_dict
+def save_sysex(filename: str, memory_dict: dict = memory.get("edit")):
+    # TODO serialize output and write valid sysex strings
+    # mido.write_syx_file(filename)
+    # file.write(Message(type='sysex', data=(*SYSEX_ID, *pdata)).bytes())
+    pass
+
+
+def load_sysex(filename: str) -> dict:
+    # sysex_stream = mido.read_syx_file(filename)
+    # TODO deserialize sysex, first chop it in parts
+    #      then put it through receive message
+    pass
+
+
+def save_waveshape(filename: str, n: int):
+    with wave.open(filename, "wb") as wavefile:
+        wavefile.setnchannels(1)
+        wavefile.setframerate(44100)
+        wavefile.setsampwidth(2)
+        wavefile.setnframes(128)
+        wavefile.writeframes(memory["waveshape"][n])
+
+
+def load_waveshape(filename: str) -> dict:
+    # TODO load from standard pcm .wav
+    with wave.open(filename, "rb") as wavefile:
+        pass
+
+
+def program_change(bank: int = None, program: int = None):
+    if bank in range(4):
+        memory.get("main").update({"bank": bank})
+        queue_out.put(Message(type="control_change", control=CC.BANK_CHANGE, value=bank))
+    if program in range(128):
+        memory.get("main").update({"program": program})
+        queue_out.put(Message(type="program_change", program=program))
 
 
 def serialize_program(program: dict) -> list:
     data = []
     for parameter in parameters.program:
         data.append(program.get(parameter))
-    data.extend(program.get("seq"))
+    data.extend(program.get("seq"))    
     return pack_ms_bit(data)
 
 
@@ -155,190 +217,128 @@ def serialize_waveshape(waveshape: list) -> list:
     return pack_ms_bit(data)
 
 
-def save_json(filename: str, memory_dict: dict = edit_memory):
-    with open(filename, "w") as file:
-        json.dump(memory_dict, file, indent=2)
+def serialize(data: list) -> tuple:
+    match data:
+        case [Dump.PROGRAM, bank, program]:
+            return Dump.PROGRAM.value, bank, program, *serialize_program(memory.get("edit"))
+        case [Dump.PROGRAM, bank, program, *dump] if len(dump) == DumpLength.PROGRAM:
+            return Dump.PROGRAM.value, bank, program, *dump
+        case [Dump.EDIT, *dump] if len(dump) == DumpLength.PROGRAM:
+            return Dump.EDIT.value, *dump
+        case [Dump.WAVESHAPE, n, *dump] if len(dump) == DumpLength.WAVESHAPE:
+            return Dump.WAVESHAPE.value, n, *dump
+        case [Dump.MAIN, *dump] if len(dump) == DumpLength.MAIN:
+            return Dump.MAIN.value, *dump
+        case [Dump.NAME, bank, program, *dump] if len(dump) == DumpLength.NAME:
+            return Dump.NAME.value, bank, program, *dump
+        case [Dump.NAME, *dump] if len(dump) == DumpLength.NAME:
+            return Dump.NAME.value, memory["main"]["bank"], memory["main"]["program"], *dump
+        case [Request.PROGRAM, bank, program]:
+            return Request.PROGRAM.value, bank, program
+        case [Request.PROGRAM]:
+            return Request.PROGRAM.value, memory["main"]["bank"], memory["main"]["program"]
+        case [Request.EDIT]:
+            return Request.EDIT.value,
+        case [Request.WAVESHAPE, n]:
+            return Request.WAVESHAPE.value, n
+        case [Request.MAIN]:
+            return Request.MAIN.value,
+        case [Request.NAME, bank, program]:
+            return Request.NAME.value, bank, program
+        case [Request.NAME]:
+            return Request.NAME.value, memory["main"]["bank"], memory["main"]["program"]
+        case [Parameter.PROGRAM, par, val]:
+            return Parameter.PROGRAM.value, parameters.program[par], *encode_ls_ms(val)
+        case _:
+            log.warning(f"unknown command: {data=}")
+            return None
 
 
-def load_json(filename: str) -> dict:
-    with open(filename, "r") as file:
-        return json.load(file)
+def queue_message(*data: list):
+    queue_out.put(Message(type="sysex", data=(*EVOLVER_ID, *serialize(data))))
 
 
-def save_sysex(filename: str, memory_dict: dict = edit_memory):
-    # TODO serialize output and write valid sysex strings
-    # mido.write_syx_file(filename)
-    # file.write(mido.Message(type='sysex', data=(*SYSEX_ID, *pdata)).bytes())
-    pass
+def assemble(data: tuple) -> dict | list:
+    match len(data):
+        case DumpLength.PROGRAM:
+            data = unpack_ms_bit(data)
+            d = {parameters.program[n]: val for n, val in enumerate(data[:128])}
+            d.update({"seq": list(data[128:])})
+        case DumpLength.MAIN:
+            d = {parameters.main[n]: val for n, val in enumerate(unpack_ls_ms(data))}
+        case DumpLength.WAVESHAPE:
+            d = unpack_ms_bit(data)
+        case DumpLength.NAME:
+            d = bytes(data).decode(encoding="ascii")
+    return d
 
 
-def load_sysex(filename: str) -> dict:
-    # sysex_stream = mido.read_syx_file(filename)
-    # TODO deserialize sysex, first chop it in parts
-    #      then put it through receive message
-    pass
+def receive_sysex(data: tuple):
+    global memory
+    match data:
+        case [Dump.PROGRAM, bank, program, *dump]:
+            memory.get("prog").get(bank).get(program).update(assemble(dump))
+        case [Dump.EDIT, *dump]:
+            memory.get("edit").update(assemble(dump))
+        case [Dump.WAVESHAPE, wave, *dump]:
+            memory.get("wave").update({wave: assemble(dump)})
+        case [Dump.MAIN, *dump]:
+            memory.get("main").update(assemble(dump))
+        case [Dump.NAME, bank, program, *dump]:
+            memory.get("name").get(bank).get(program).update(assemble(dump))
+        case [Parameter.PROGRAM, parameter, ls, ms]:
+            memory["edit"].update({parameters.program[parameter]: decode_ls_ms(ls, ms)})
+        case [Parameter.SEQUENCER, step, ls, ms]:
+            memory.get("edit").get("seq")[step] = decode_ls_ms(ls, ms)
+        case [Parameter.MAIN, parameter, ls, ms]:
+            memory["main"].update({parameters.main[parameter]: decode_ls_ms(ls, ms)})
+        case _:
+            log.warning(f"received unknown: {data=}")
 
 
-def save_waveshape(filename: str, wave_number: int):
-    with wave.open(filename, "wb") as wavefile:
-        wavefile.setnchannels(1)
-        wavefile.setframerate(44100)
-        wavefile.setsampwidth(2)
-        wavefile.setnframes(128)
-        for point in wave_memory[wave_number]:
-            wavefile.writeframes(bytes([point & 0xFF, point >> 8]))
-
-
-def load_waveshape(filename: str) -> dict:
-    # TODO load from standard pcm .wav
-    with wave.open(filename, "rb") as wavefile:
-        pass
-    waveshape = [0 for n in range(128)]
-    return waveshape
-
-
-def program_change(bank: int, program: int):
-    if bank in range(4):
-        main_memory["bank"] = bank
-        queue_out.put(
-            mido.Message(type="control_change", control=CC_BANK_CHANGE, value=bank)
-        )
-    if program in range(128):
-        main_memory["program"] = program
-        queue_out.put(mido.Message(type="program_change", program=program))
-
-
-def queue_sysex(data: list):
-    message = mido.Message(type="sysex", data=(*SYSEX_ID, *data))
-    queue_out.put(message)
-    log.debug(f"queued {message} ({queue_out.qsize()=})")
-
-
-def send_program(bank: int, program: int, memory_dict: dict = edit_memory):
-    queue_sysex([PROG_DUMP, bank, program, *serialize_program(memory_dict)])
-
-
-def send_name(bank: int, program: int, name: str):
-    queue_sysex([NAME_DUMP, bank, program, *encode_string(name)])
-
-
-def send_edit(memory_dict: dict = edit_memory):
-    queue_sysex([EDIT_DUMP, *serialize_program(memory_dict)])
-
-
-def req_program(bank: int, program: int):
-    queue_sysex([PROG_REQ, bank, program])
-
-
-def req_edit():
-    queue_sysex([EDIT_REQ])
-
-
-def req_wave(wave_number: int):
-    queue_sysex([WAVE_REQ, wave_number])
-
-
-def req_main():
-    queue_sysex([MAIN_REQ])
-
-
-def req_name(bank: int, program: int):
-    queue_sysex([NAME_REQ, bank, program])
-
-
-def midi_in_callback(message: mido.Message):
-    if message.type == "program_change":
-        main_memory.update({"program": message.program})
-    elif message.type == "control_change" and message.control == 32:
-        main_memory.update({"bank": message.value})
-    elif message.type == "sysex" and message.data[:3] == SYSEX_ID:
-        identifier = message.data[3]
-        data = message.data[4:]
-        if identifier == PROG_DUMP:
-            bank = data[0]
-            program = data[1]
-            prog_dict = assemble_program(data[2:])
-            program_memory.get(bank).get(program).update(prog_dict)
-            log.info(f"received {bank=} {program=} -> {prog_dict=}")
-        elif identifier == EDIT_DUMP:
-            prog_dict = assemble_program(data)
-            edit_memory.update(prog_dict)
-            log.info(f"received {prog_dict}")
-        elif identifier == WAVE_DUMP:
-            wave_number = data[0]
-            wave_shape = assemble_waveshape(data[1:])
-            wave_memory[wave_number] = wave_shape
-            log.info(f"received waveshape {wave_number}: {wave_memory[wave_number]}")
-        elif identifier == MAIN_DUMP:
-            main_dict = assemble_main(data)
-            main_memory.update(main_dict)
-            log.info(f"received {main_dict}")
-        elif identifier == NAME_DUMP:
-            bank = data[0]
-            program = data[1]
-            name_str = decode_string(data[2:])
-            program_memory.get(bank).get(program).update({"name": name_str})
-            log.info(f"received {bank=} {program=} -> {name_str=}")
-        elif identifier == MAIN_PAR:
-            par = parameters.main[data[0]]
-            val = decode_ls_ms(data[1], data[2])
-            main_memory.update({par: val})
-            log.info(f"received {par=} {val=}")
-        elif identifier == PROG_PAR:
-            par = parameters.program[data[0]]
-            val = decode_ls_ms(data[1], data[2])
-            edit_memory.update({par: val})
-            log.info(f"received {par=} {val=}")
-        elif identifier == SEQ_PAR:
-            step = data[0]
-            val = decode_ls_ms(data[1], data[2])
-            edit_memory.get("seq")[step] = val
-            log.info(f"received {step=} {val=}")
-        else:
-            log.warning(f"received unknown {data=}")
-    else:
-        log.warning(f"received unknown {message}")
+def midi_in_callback(message: Message):
+    global memory
+    match message:
+        case Message(type="program_change"):
+            memory.get("main").update({"program": message.program})
+        case Message(type="control_change", control=CC.BANK_CHANGE):
+            memory.get("main").update({"bank": message.value})
+        case Message(type="sysex") if message.data[:3] == EVOLVER_ID:
+            receive_sysex(message.data[3:])
+        case _:
+            log.warning(f"received unknown: {message}")
 
 
 def queue_out_thread():
+    global memory
     bank = None
     program = None
-    req_main()
+    queue_message(Request.MAIN)
     while not midi_out.closed:
-        if bank != main_memory.get("bank") or program != main_memory.get("program"):
-            bank = main_memory.get("bank")
-            program = main_memory.get("program")
-            log.info(f"program change {bank=} {program=}")
-            req_edit()
-            program_memory[bank][program].update(edit_memory)
+        if bank != memory.get("main").get("bank") or program != memory.get("main").get("program"):
+            bank = memory.get("main").get("bank")
+            program = memory.get("main").get("program")
+            log.info(f"program change -> {bank=} {program=}")
+            queue_message(Request.EDIT)
+            memory["patch"][bank][program].update(memory.get("edit"))
         if not queue_out.empty():
             message = queue_out.get()
             midi_out.send(message)
             queue_out.task_done()
             log.info(f"sent {message}")
-            log.debug(f"{queue_out.qsize()=}")
         sleep(OUT_SPEED)
-    log.info(f"goodbye. {midi_out.closed=}")
 
 
 if __name__ == "__main__":
-    # logging starts here
-    log = logging.getLogger("evolver")
-    log_format = logging.Formatter("[%(asctime)s %(levelname)s] %(message)s")
-    log_format.datefmt = "%Y%m%d %H%M%S"
-    log_stdout = logging.StreamHandler()
-    log_stdout.setFormatter(log_format)
-    log.addHandler(log_stdout)
-    log.setLevel(logging.INFO)
-    # midi in callback function
     if MIDI_IN in mido.get_input_names():
         midi_in = mido.open_input(MIDI_IN, callback=midi_in_callback)
     else:
-        raise NameError(f"No such port: {MIDI_IN=}")
-    # midi out thread
+        raise ValueError(f"No such port: {MIDI_IN=}")
+
     if MIDI_OUT in mido.get_output_names():
         midi_out = mido.open_output(MIDI_OUT)
     else:
-        raise NameError(f"No such port: {MIDI_OUT=}")
+        raise ValueError(f"No such port: {MIDI_OUT=}")
+
     qot = Thread(target=queue_out_thread)
     qot.start()

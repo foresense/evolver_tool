@@ -1,26 +1,5 @@
-# Evolver Tool
+# Evolute
 
-Tool to extract and manipulate SysEx data from the Dave Smith Instruments Evolver.
+Utility to manipulate the DSI Evolver
 
-## Evolver SysEx
 
-PROG_PAR = 0x01     #     1         program parameter, LS, MS
-SEQ_PAR = 0x08      #  1000         sequencer step, LS, MS
-MAIN_PAR = 0x09     #  1001         main parameter, LS, MS
-
-PROG_DUMP = 0x02    #    10         bank / program / 220 bytes packed MS bit -> 128 bytes program + 64 bytes sequencer
-EDIT_DUMP = 0x03    #    11         220 bytes packed MS bit -> 128 bytes program + 64 bytes sequencer
-WAVE_DUMP = 0x0A    #  1010         waveshape (96-127) / 293 bytes packed MS bit -> 256 bytes
-MAIN_DUMP = 0x0F    #  1111         32 bytes LS/MS
-NAME_DUMP = 0x11    # 10001         bank / program / 16 bytes ASCII 7-bit
-
-PROG_REQ = 0x05     #   101         bank / program
-EDIT_REQ = 0x06     #   110
-WAVE_REQ = 0x0B     #  1011         waveshape (0-127)
-MAIN_REQ = 0x0E     #  1110
-NAME_REQ = 0x10     # 10000         bank / program
-
-RESET = 0x04        #   100
-START_STOP = 0x12   # 10010
-SHIFT_ON = 0x13     # 10011
-SHIFT_OFF = 0x14    # 10100

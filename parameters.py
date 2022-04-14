@@ -6,9 +6,9 @@ main = (
     "bpm",
     "clock_div",
     "program_tempo",
-    "midi_clock",
+    "clock_sync",
     "lock_seq",
-    "poly_chain",
+    "polychain",
     "input_gain",
     "fine_tune",
     "midi_rec",
@@ -16,13 +16,6 @@ main = (
     "midi_chan",
     "midi_dump",
 )
-
-main_new = (
-    {"program": range(128)},
-    {"bank": range(4)},
-    # etc
-)
-
 
 program = (
     "osc1_freq",
@@ -90,7 +83,7 @@ program = (
     "ext_in_mode",
     "input_hack",
     "osc1_glide",
-    "sync_2-1",
+    "sync_21",
     "bpm",
     "clock_div",
     "osc2_glide",
@@ -98,13 +91,13 @@ program = (
     "pb_range",
     "key_mode",
     "osc3_glide",
-    "fm_4-3",
+    "fm_43",
     "osc3_shape_seq",
-    "rm_4-3",
+    "rm_43",
     "osc4_glide",
-    "fm_3-4",
+    "fm_34",
     "osc4_shape_seq",
-    "rm_3-4",
+    "rm_34",
     "filt_poles",
     "filt_vel",
     "filt_audio_mod",
@@ -113,7 +106,7 @@ program = (
     "mod1_source",
     "mod1_amount",
     "mod1_dest",
-    "exp-lin_env",
+    "exp_lin_env",
     "vca_vel",
     "mod2_source",
     "mod2_amount",
