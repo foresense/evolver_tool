@@ -1,7 +1,7 @@
-.DS_Store
 __pycache__
-waveshapes
-*.wav
-*.json
-.venv
 .python-version
+.venv
+*.ipynb
+*.json
+*.wav
+waveshapes
