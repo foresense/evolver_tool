@@ -1,7 +1,7 @@
 # mapping.py
 # mapping strings to parameter values in a dictionary
 
-# NOTE Lot's of f-strings which I will could get rid of for clarity once I'm sure I won't change them
+# NOTE a lot of f-strings which I will could get rid of for clarity once I'm sure I won't change them
 
 def make_mapping(strings: list, *, offset: int = 0, zero: int = 0) -> dict:
     return {n + offset: s for n, s in enumerate(strings) if s != None}

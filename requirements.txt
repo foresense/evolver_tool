@@ -1,2 +1,3 @@
 mido>=1.2.10
-python-rtmidi>=1.4.9
+python-rtmidi>=1.4.9 --install-option="--no-jack"
+trio>=0.20.0
