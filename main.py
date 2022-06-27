@@ -19,19 +19,23 @@ def midi_in_callback(message: Message):
         case Message(type="control_change", control=CC.BANK_CHANGE):
             # on bank change send out a new dump edit memory sysex command
             # memory.get("main").update({"bank": message.value})
+            pass
         case Message(type="sysex") if message.data[:3] == sysex_id:
-            #receive_sysex(message.data[3:])
+            # receive_sysex(message.data[3:])
+            pass
         case _:
             log.warning(f"received unknown: {message}")
 
 
 def queue_out_thread():
-    #global memory
+    # global memory
     bank = None
     program = None
     # queue_message(Request.MAIN)
     while not midi_out.closed:
-        if bank != memory.get("main").get("bank") or program != memory.get("main").get("program"):
+        if bank != memory.get("main").get("bank") or program != memory.get(
+            "main"
+        ).get("program"):
             # bank = memory.get("main").get("bank")
             # program = memory.get("main").get("program")
             log.info(f"program change -> {bank=} {program=}")
@@ -46,7 +50,7 @@ def queue_out_thread():
 
 
 if __name__ == "__main__":
-    
+
     midi_in = utils.open_mido_input(config.midi_in, callback=midi_in_callback)
     midi_out = utils.open_midi_output(config.midi_out)
 
@@ -54,8 +58,7 @@ if __name__ == "__main__":
     qot.start()
 
 
-
-''' TODO
+""" TODO
 
 
 use: asyncio or trio
@@ -74,4 +77,4 @@ widgets / parameters
 
 I could generalize this as a library?
 
-'''
+"""

@@ -7,7 +7,9 @@ import mido
 
 
 def get_logger(name: str) -> logging.Logger:
-    log_format = logging.Formatter("[%(asctime)s %(levelname)s] %(message)s", datefmt="%Y.%m.%d %H:%M:%S")
+    log_format = logging.Formatter(
+        "[%(asctime)s %(levelname)s] %(message)s", datefmt="%Y.%m.%d %H:%M:%S"
+    )
     log_stdout = logging.StreamHandler(format=log_format)
     return logging.getLogger(name, handler=log_stdout)
 
@@ -52,8 +54,7 @@ def load_waveshape(filename: str) -> dict:
 
 
 def open_input(portname: str):
-    """Open the first input port that starts with 'portname'
-    """
+    """Open the first input port that starts with 'portname'"""
     for p in mido.get_input_names():
         if p.startswith(portname):
             return mido.open_input(p)
@@ -61,8 +62,7 @@ def open_input(portname: str):
 
 
 def open_output(portname: str):
-    """Open the first output port that starts with 'portname'
-    """
+    """Open the first output port that starts with 'portname'"""
     for p in mido.get_output_names():
         if p.startswith(portname):
             return mido.open_output(p)
@@ -70,8 +70,7 @@ def open_output(portname: str):
 
 
 def encode_nibble(b: int) -> bytes:
-    """encode 8-bit integer to 4-bit bytestream
-    """
+    """encode 8-bit integer to 4-bit bytestream"""
     if b in range(256):
         return bytes([b & 0xF, b >> 4])
     else:
@@ -79,8 +78,7 @@ def encode_nibble(b: int) -> bytes:
 
 
 def decode_nibble(ls: int, ms: int) -> int:
-    """combine 4-bit bytestream to 8-bit integer
-    """
+    """combine 4-bit bytestream to 8-bit integer"""
     if ls in range(16) and ms in range(16):
         return ls | ms << 4
     else:
@@ -88,13 +86,12 @@ def decode_nibble(ls: int, ms: int) -> int:
 
 
 def unpack_nibbles(packed_data: bytes, endian: str = "little") -> tuple:
-    """unpack a stream of nibbles in bytes format
-    """
+    """unpack a stream of nibbles in bytes format"""
     if type(packed_data) is not bytes:
         raise ValueError(f"{type(packed_data)=}. should be bytes.")
     if len(packed_data) % 2:
         raise ValueError(f"{len(packed_data)=}. should be even.")
-    
+
     idat = iter(packed_data)
     zdat = zip(idat, idat)
 
@@ -113,7 +110,7 @@ def pack_str(string: str) -> bytes:
     return bytes([ord(c) for c in string])
 
 
-#def encode_string(name: str) -> list:
+# def encode_string(name: str) -> list:
 #    if len(name) in range(17):
 #        return [ord(c) for c in name] + [ord(" ") for n in range(16 - len(name))]
 #    else:
@@ -134,7 +131,9 @@ def pack_msbit(data: tuple) -> bytes:
             packed_data.append(byte & 0x7F)
         else:
             packed_data.append(byte & 0x7F)
-            packed_data[ms_bits_index] = packed_data[ms_bits_index] | (ms_bit << cycle)
+            packed_data[ms_bits_index] = packed_data[ms_bits_index] | (
+                ms_bit << cycle
+            )
     return bytes(packed_data)
 
 

@@ -19,18 +19,18 @@ class TkTrio(tkinter.Tk):
         self._tk_func_name = self.register(self._tk_func)
         self._q = deque()
         super().__init__(self, *args, **kwargs)
-    
+
     def _tk_func(self):
         self._q.popleft()()
 
     def run_sync_soon_threadsafe(self, func):
         self._q.append(func)
-        self.call('after', 'idle', self._tk_func_name)
+        self.call("after", "idle", self._tk_func_name)
 
     def run_sync_soon_not_threadsafe(self, func):
         self._q.append(func)
-        self.call('after', 'idle', 'after', 0, self._tk_func_name)
-    
+        self.call("after", "idle", "after", 0, self._tk_func_name)
+
     def done_callback(self, outcome):
         print(f"Outcome: {outcome}")
         if isinstance(outcome, Error):
@@ -42,9 +42,9 @@ class TkTrio(tkinter.Tk):
 class TkDisplay:
     def __init__(self, master):
         self.master = master
-        self.progress = ttk.Progressbar(master, length='6i')
+        self.progress = ttk.Progressbar(master, length="6i")
         self.progress.pack(fill=tkinter.BOTH, expand=1)
-        self.cancel_button = tkinter.Button(master, text='Cancel')
+        self.cancel_button = tkinter.Button(master, text="Cancel")
         self.cancel_button.pack()
         self.prev_downloaded = 0
 
@@ -60,10 +60,12 @@ class TkDisplay:
 
     def set_cancel(self, fn):
         self.cancel_button.configure(command=fn)
-        self.master.protocol("WM_DELETE_WINDOW", fn)  # calls .destroy() by default
+        self.master.protocol(
+            "WM_DELETE_WINDOW", fn
+        )  # calls .destroy() by default
 
 
-async def count(display, period=.1, max=60):
+async def count(display, period=0.1, max=60):
     display.set_title(f"Counting every {period} seconds...")
     display.set_max(60)
     with trio.CancelScope() as cancel_scope:
@@ -87,5 +89,5 @@ def main(task):
     root.mainloop()
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main(count)

@@ -1,6 +1,6 @@
 # evolver.py
 # sysex translation engine
-# 
+#
 
 import json
 import wave
@@ -60,7 +60,6 @@ class Command(IntEnum):
     SHIFT_OFF = 0x14
 
 
-
 def program_change(bank: int = None, program: int = None):
     if bank in range(4):
         # memory.get("main").update({"bank": bank})
@@ -77,7 +76,7 @@ def serialize_program(program: dict) -> list:
     data = []
     for parameter in parameters.program:
         data.append(program.get(parameter))
-    data.extend(program.get("seq"))    
+    data.extend(program.get("seq"))
     return utils.pack_msbit(data)
 
 
@@ -99,8 +98,17 @@ def serialize_waveshape(waveshape: list) -> list:
 def serialize(data: list) -> tuple:
     match data:
         case [Partition.PROGRAM, bank, program]:
-            return bytes([Partition.PROGRAM.value, bank, program, *serialize_program(memory.get("edit"))])
-        case [Partition.PROGRAM, bank, prog, *part] if len(part) == Length.PROGRAM:
+            return bytes(
+                [
+                    Partition.PROGRAM.value,
+                    bank,
+                    program,
+                    *serialize_program(memory.get("edit")),
+                ]
+            )
+        case [Partition.PROGRAM, bank, prog, *part] if len(
+            part
+        ) == Length.PROGRAM:
             return Partition.PROGRAM.value, bank, prog, *part
         case [Partition.EDIT, *part] if len(part) == Length.PROGRAM:
             return Partition.EDIT.value, *part
@@ -111,30 +119,48 @@ def serialize(data: list) -> tuple:
         case [Partition.NAME, bank, program, *part] if len(part) == Length.NAME:
             return Partition.NAME.value, bank, program, *part
         case [Partition.NAME, *part] if len(part) == Length.NAME:
-            return Partition.NAME.value, memory["main"]["bank"], memory["main"]["program"], *part
+            return (
+                Partition.NAME.value,
+                memory["main"]["bank"],
+                memory["main"]["program"],
+                *part,
+            )
         case [Request.PROGRAM, bank, program]:
             return Request.PROGRAM.value, bank, program
         case [Request.PROGRAM]:
-            return Request.PROGRAM.value, memory["main"]["bank"], memory["main"]["program"]
+            return (
+                Request.PROGRAM.value,
+                memory["main"]["bank"],
+                memory["main"]["program"],
+            )
         case [Request.EDIT]:
-            return Request.EDIT.value,
+            return (Request.EDIT.value,)
         case [Request.WAVESHAPE, n]:
             return Request.WAVESHAPE.value, n
         case [Request.MAIN]:
-            return Request.MAIN.value,
+            return (Request.MAIN.value,)
         case [Request.NAME, bank, program]:
             return Request.NAME.value, bank, program
         case [Request.NAME]:
-            return Request.NAME.value, memory["main"]["bank"], memory["main"]["program"]
+            return (
+                Request.NAME.value,
+                memory["main"]["bank"],
+                memory["main"]["program"],
+            )
         case [Parameter.PROGRAM, par, val]:
-            return Parameter.PROGRAM.value, parameters.program[par], *utils.encode_nibble(val)
+            return (
+                Parameter.PROGRAM.value,
+                parameters.program[par],
+                *utils.encode_nibble(val),
+            )
         case _:
             log.warning(f"unknown command: {data=}")
             return None
 
+
 # TODO WHAT
 
-#def queue_message(*data: list):
+# def queue_message(*data: list):
 #    queue_out.put(Message(type="sysex", data=(*EVOLVER_ID, *serialize(data))))
 
 
@@ -142,9 +168,14 @@ def assemble(data: bytes) -> dict | list:
     match len(data):
         case Length.PROGRAM:
             data = utils.unpack_msbit(data)
-            return {parameters.program[n]: val for n, val in enumerate(data[:128])} | {"seq": list(data[128:])}
+            return {
+                parameters.program[n]: val for n, val in enumerate(data[:128])
+            } | {"seq": list(data[128:])}
         case Length.MAIN:
-            d = {parameters.main[n]: val for n, val in enumerate(utils.unpack_nibbles(data))}
+            d = {
+                parameters.main[n]: val
+                for n, val in enumerate(utils.unpack_nibbles(data))
+            }
         case Length.WAVESHAPE:
             d = utils.unpack_msbit(data)
         case Length.NAME:
@@ -166,15 +197,15 @@ def receive_sysex(data: tuple):
             return {"bank": bank, "prog": prog, "name": assemble(part)}
 
         case [Parameter.PROGRAM, parameter, ls, ms]:
-            memory["edit"].update({parameters.program[parameter]: utils.decode_nibble(ls, ms)})
+            memory["edit"].update(
+                {parameters.program[parameter]: utils.decode_nibble(ls, ms)}
+            )
         case [Parameter.SEQUENCER, step, ls, ms]:
             memory.get("edit").get("seq")[step] = utils.decode_nibble(ls, ms)
         case [Parameter.MAIN, parameter, ls, ms]:
-            memory["main"].update({parameters.main[parameter]: utils.decode_nibble(ls, ms)})
+            memory["main"].update(
+                {parameters.main[parameter]: utils.decode_nibble(ls, ms)}
+            )
 
         case _:
             log.warning(f"received unknown: {data=}")
-
-
-class Evolver:
-
