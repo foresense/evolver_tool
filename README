@@ -3,3 +3,8 @@
 Utility to manipulate the DSI Evolver
 
 
+## Requirements
+
+- mido
+- python-rtmidi
+- python-osc
